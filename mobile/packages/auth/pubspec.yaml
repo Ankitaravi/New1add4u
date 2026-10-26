@@ -1,0 +1,17 @@
+name: auth
+description: OTP sign-in state for the 1ADD4U apps. Pure Dart; apps supply a secure TokenStore.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  core:
+    path: ../core
+  http: ^1.2.0
+
+dev_dependencies:
+  crypto: ^3.0.3
+  lints: ^5.0.0
+  test: ^1.25.0

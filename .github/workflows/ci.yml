@@ -33,9 +33,41 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  mobile:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: add4u, POSTGRES_PASSWORD: add4u, POSTGRES_DB: add4u }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U add4u" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://add4u:add4u@localhost:5432/add4u
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - uses: dart-lang/setup-dart@v1
+      - name: Start the API (non-production mode, seeded)
+        working-directory: backend
+        run: |
+          npm ci
+          npm run build
+          npx prisma migrate deploy
+          npm run seed
+          PORT=3000 node dist/main.js &
+          npx --yes wait-on http://localhost:3000/auth/me --validateStatus 401 -t 60000 || npx --yes wait-on tcp:3000 -t 60000
+      - name: core
+        working-directory: mobile/packages/core
+        run: dart pub get && dart analyze && API_URL=http://localhost:3000 dart test
+      - name: auth
+        working-directory: mobile/packages/auth
+        run: dart pub get && dart analyze && API_URL=http://localhost:3000 dart test
+
   docker:
     runs-on: ubuntu-latest
-    needs: [backend, web]
+    needs: [backend, web, mobile]
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t add4u-api backend
