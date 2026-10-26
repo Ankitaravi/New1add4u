@@ -1,17 +1,32 @@
 import 'dart:convert';
 
+import 'package:core/api.dart';
 import 'package:core/core.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
-ApiClient clientFor(MockClient m,
-        {String? token, void Function()? onUnauthorized}) =>
-    ApiClient(
-        baseUrl: 'http://api.test/',
-        httpClient: m,
-        tokenProvider: () => token,
-        onUnauthorized: onUnauthorized);
+/// Stands in for the app's AuthController.
+class FakeTokens implements TokenProvider {
+  FakeTokens(this.token, {this.refreshWorks = true});
+  String? token;
+  bool refreshWorks;
+  int refreshes = 0;
+
+  @override
+  Future<String?> accessToken() async => token;
+
+  @override
+  Future<bool> refresh() async {
+    refreshes++;
+    if (!refreshWorks) return false;
+    token = 'new';
+    return true;
+  }
+}
+
+ApiClient clientFor(MockClient m, [FakeTokens? tokens]) =>
+    ApiClient(baseUrl: 'http://api.test', client: m)..tokens = tokens;
 
 void main() {
   group('money', () {
@@ -129,42 +144,77 @@ void main() {
     });
   });
 
-  group('ApiClient', () {
-    test(
-        'sends bearer token, JSON body, trims base url, drops null query params',
+  group('ApiClient (the app\'s own client)', () {
+    test('sends bearer token on auth calls, JSON body, drops null query params',
         () async {
       late http.Request seen;
       final c = clientFor(MockClient((r) async {
         seen = r;
         return http.Response('{"ok":true}', 200);
-      }), token: 'tok');
-      final res = await c.post('/x', body: {'a': 1});
-      expect(res, {'ok': true});
-      expect(seen.url.toString(), 'http://api.test/x');
+      }), FakeTokens('tok'));
+      expect(await c.post('/x', body: {'a': 1}, auth: true), {'ok': true});
       expect(seen.headers['Authorization'], 'Bearer tok');
       expect(jsonDecode(seen.body), {'a': 1});
 
       await c.get('/doctors', query: {'q': 'dr s', 'stream': null});
-      expect(seen.url.queryParameters, {'q': 'dr s'});
+      expect(seen.url.toString(), 'http://api.test/doctors?q=dr+s');
     });
-    test('no Authorization header without a token', () async {
+    test('post is unauthenticated by default (login endpoints)', () async {
       late http.Request seen;
       final c = clientFor(MockClient((r) async {
         seen = r;
         return http.Response('{}', 200);
-      }));
-      await c.get('/doctors');
+      }), FakeTokens('tok'));
+      await c.post('/auth/otp/request', body: {'phone': '9000000001'});
       expect(seen.headers.containsKey('Authorization'), isFalse);
     });
-    test('empty 2xx body returns null', () async {
-      final c = clientFor(MockClient((_) async => http.Response('', 204)));
-      expect(await c.delete('/x'), isNull);
+    test(
+        '401 -> refresh once -> retry with the new token, keeping query and body',
+        () async {
+      final seen = <http.Request>[];
+      final tokens = FakeTokens('old');
+      final c = clientFor(MockClient((r) async {
+        seen.add(r);
+        return r.headers['Authorization'] == 'Bearer new'
+            ? http.Response('{"ok":1}', 200)
+            : http.Response('{"message":"Invalid token"}', 401);
+      }), tokens);
+      expect(await c.get('/doctors', query: {'q': 'x'}), {'ok': 1});
+      expect(tokens.refreshes, 1);
+      expect(seen.map((r) => r.headers['Authorization']),
+          ['Bearer old', 'Bearer new']);
+      expect(seen.last.url.queryParameters, {'q': 'x'});
     });
-    test('Nest error messages: string, validation list, missing', () async {
+    test(
+        '401 and refresh fails -> ApiException(401); a second 401 does not loop',
+        () async {
+      final a = FakeTokens('old', refreshWorks: false);
+      await expectLater(
+          clientFor(
+                  MockClient(
+                      (_) async => http.Response('{"message":"x"}', 401)),
+                  a)
+              .get('/me'),
+          throwsA(isA<ApiException>()
+              .having((e) => e.isUnauthorized, '401', true)));
+      expect(a.refreshes, 1);
+
+      var calls = 0;
+      final b = FakeTokens('old');
+      await expectLater(
+          clientFor(MockClient((_) async {
+            calls++;
+            return http.Response('{"message":"still no"}', 401);
+          }), b)
+              .get('/me'),
+          throwsA(isA<ApiException>()));
+      expect((calls, b.refreshes), (2, 1));
+    });
+    test('error messages: string, validation list, plain text', () async {
       Future<ApiException> errorOf(String body, int code) async {
-        final c = clientFor(MockClient((_) async => http.Response(body, code)));
         try {
-          await c.get('/x');
+          await clientFor(MockClient((_) async => http.Response(body, code)))
+              .get('/x');
         } on ApiException catch (e) {
           return e;
         }
@@ -173,64 +223,63 @@ void main() {
 
       var e = await errorOf(
           '{"message":"Slot not available","statusCode":409}', 409);
-      expect((e.status, e.message, e.isConflict),
-          (409, 'Slot not available', true));
+      expect((e.statusCode, e.status, e.message, e.isConflict),
+          (409, 409, 'Slot not available', true));
       e = await errorOf(
           '{"message":["phone must be 10 digits","otp must be a string"]}',
           400);
-      expect(e.message, 'phone must be 10 digits\notp must be a string');
-      e = await errorOf('<html>bad gateway</html>', 502);
-      expect(e.status, 502);
-      expect(e.message, isNotEmpty);
+      expect(e.message, 'phone must be 10 digits, otp must be a string');
+      expect((await errorOf('', 500)).message, 'Request failed');
     });
-    test(
-        '401 with a token fires onUnauthorized; 401 without one (wrong OTP) does not',
+    test('empty body is null; a list body is wrapped as {data: [...]}',
         () async {
-      var fired = 0;
-      final m = MockClient(
-          (_) async => http.Response('{"message":"Invalid token"}', 401));
-      await expectLater(
-          clientFor(m, token: 't', onUnauthorized: () => fired++)
-              .get('/auth/me'),
-          throwsA(isA<ApiException>()));
-      expect(fired, 1);
-      await expectLater(
-          clientFor(m, onUnauthorized: () => fired++).post('/auth/otp/verify'),
-          throwsA(isA<ApiException>()));
-      expect(fired, 1);
+      expect(
+          await clientFor(MockClient((_) async => http.Response('', 204)))
+              .delete('/x'),
+          isNull);
+      expect(
+          await clientFor(MockClient((_) async => http.Response('[1,2]', 200)))
+              .get('/x'),
+          {
+            'data': [1, 2]
+          });
     });
-    test('network failure and timeout become status-0 ApiExceptions', () async {
-      final down = clientFor(MockClient(
-          (_) async => throw http.ClientException('connection refused')));
-      await expectLater(
-          down.get('/x'),
-          throwsA(isA<ApiException>()
-              .having((e) => e.isNetwork, 'isNetwork', true)));
+  });
 
-      final slow = ApiClient(
-        baseUrl: 'http://api.test',
-        timeout: const Duration(milliseconds: 20),
-        httpClient: MockClient((_) async {
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-          return http.Response('{}', 200);
-        }),
-      );
-      await expectLater(
-          slow.get('/x'),
-          throwsA(isA<ApiException>()
-              .having((e) => e.message, 'message', contains('timed out'))));
+  group('Transport', () {
+    Transport over(String body, {int code = 200}) => Transport(clientFor(
+        MockClient((_) async => http.Response(body, code)), FakeTokens('t')));
+
+    test('gives lists back as lists, objects as objects', () async {
+      expect(await over('[{"id":"a"}]').get('/x'), [
+        {'id': 'a'}
+      ]);
+      expect(await over('{"id":"a"}').get('/x'), {'id': 'a'});
+      expect(await over('').delete('/x'), isNull);
+    });
+    test('an object that merely has a "data" field is not unwrapped', () async {
+      final r = await over('{"id":"r1","title":"BP","data":{"sys":120}}')
+          .get('/x') as Map;
+      expect(r['id'], 'r1');
+    });
+    test('post is authenticated (typed services never log in)', () async {
+      late http.Request seen;
+      final t = Transport(clientFor(MockClient((r) async {
+        seen = r;
+        return http.Response('{}', 200);
+      }), FakeTokens('tok')));
+      await t.post('/appointments/book', body: {});
+      expect(seen.headers['Authorization'], 'Bearer tok');
     });
   });
 
   test('DoctorsApi.register validates the HPR id before calling the server',
       () {
     var called = false;
-    final api = Api(
-        baseUrl: 'http://api.test',
-        httpClient: MockClient((_) async {
-          called = true;
-          return http.Response('{}', 201);
-        }));
+    final api = Api(clientFor(MockClient((_) async {
+      called = true;
+      return http.Response('{}', 201);
+    })));
     expect(
       () => api.doctors.register(
           hprId: '123',

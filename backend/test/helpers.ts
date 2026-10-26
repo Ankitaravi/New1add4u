@@ -50,10 +50,16 @@ export const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
 import request from 'supertest';
 import { createHmac } from 'crypto';
 
+/** Full OTP login; returns the access token. */
 export async function login(app: INestApplication, phone: string): Promise<string> {
-  await request(app.getHttpServer()).post('/auth/otp/send').send({ phone });
-  const r = await request(app.getHttpServer()).post('/auth/otp/verify').send({ phone, otp: '123456' });
-  return r.body.token;
+  return (await loginFull(app, phone)).accessToken;
+}
+
+export async function loginFull(app: INestApplication, phone: string) {
+  const http = () => request(app.getHttpServer());
+  const c = await http().post('/auth/otp/request').send({ phone });
+  const r = await http().post('/auth/otp/verify').send({ phone, challengeId: c.body.challengeId, code: '123456' });
+  return r.body as { accessToken: string; refreshToken: string; user: any; expiresInSeconds: number };
 }
 
 /** The next calendar date (YYYY-MM-DD, at least 2 days ahead) falling on the given weekday (0=Sun). */

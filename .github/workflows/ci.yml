@@ -61,8 +61,8 @@ jobs:
       - name: core
         working-directory: mobile/packages/core
         run: dart pub get && dart analyze && API_URL=http://localhost:3000 dart test
-      - name: auth
-        working-directory: mobile/packages/auth
+      - name: auth contract (the app's real AuthController)
+        working-directory: mobile/contract_tests
         run: dart pub get && dart analyze && API_URL=http://localhost:3000 dart test
 
   docker:

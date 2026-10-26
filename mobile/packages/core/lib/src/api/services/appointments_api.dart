@@ -1,11 +1,11 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../enums.dart';
 import '../models.dart';
 import '../money.dart';
 
 class AppointmentsApi {
   AppointmentsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   /// Open "HH:MM" slots for a doctor on a day, plus the price the patient will pay.
   Future<SlotDay> slots(String doctorId, DateTime date) async =>

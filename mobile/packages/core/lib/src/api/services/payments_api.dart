@@ -1,4 +1,4 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../enums.dart';
 import '../models.dart';
 
@@ -7,7 +7,7 @@ import '../models.dart';
 /// paid order is confirmed even if the app dies before calling [verify].
 class PaymentsApi {
   PaymentsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   Future<PaymentOrder> createOrder(
           PaymentPurpose purpose, String refId) async =>

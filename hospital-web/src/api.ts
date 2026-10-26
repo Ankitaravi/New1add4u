@@ -1,8 +1,44 @@
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000';
-const KEY = 'add4u.hospital.token';
+const ACCESS = 'add4u.hospital.access';
+const REFRESH = 'add4u.hospital.refresh';
 
-export const getToken = () => localStorage.getItem(KEY);
-export const setToken = (t: string | null) => (t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY));
+export const getToken = () => localStorage.getItem(ACCESS);
+export const getRefreshToken = () => localStorage.getItem(REFRESH);
+export function setTokens(t: { accessToken: string; refreshToken: string } | null) {
+  if (t) {
+    localStorage.setItem(ACCESS, t.accessToken);
+    localStorage.setItem(REFRESH, t.refreshToken);
+  } else {
+    localStorage.removeItem(ACCESS);
+    localStorage.removeItem(REFRESH);
+  }
+}
+
+/** One in-flight refresh shared by parallel 401s: replaying a refresh token would end the session. */
+let refreshing: Promise<boolean> | null = null;
+function refreshTokens(): Promise<boolean> {
+  return (refreshing ??= (async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+    try {
+      const res = await fetch(BASE + '/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) setTokens(null);
+        return false;
+      }
+      setTokens(await res.json());
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshing = null;
+    }
+  })());
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -10,13 +46,14 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}, retried = false): Promise<T> {
   const token = getToken();
   const res = await fetch(BASE + path, {
     method: init.method ?? 'GET',
     headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
+  if (res.status === 401 && token && !retried && (await refreshTokens())) return api<T>(path, init, true);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const m = (data as any).message;

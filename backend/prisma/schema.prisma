@@ -110,11 +110,30 @@ model User {
   deviceTokens  DeviceToken[]
 }
 
+/// Short-lived access token. `expiresAt` is null only for seeded dev/test tokens.
 model AuthToken {
-  token     String   @id
+  token     String    @id
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyId  String?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([familyId])
+}
+
+/// Rotating refresh token (only its SHA-256 is stored). Every login starts a family; using
+/// an already-rotated token revokes the whole family (token theft).
+model RefreshToken {
+  id        String    @id @default(cuid())
+  hash      String    @unique
+  userId    String
+  familyId  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([familyId])
 }
 
 model Otp {
@@ -123,6 +142,7 @@ model Otp {
   code      String
   expiresAt DateTime
   consumed  Boolean  @default(false)
+  attempts  Int      @default(0)
   createdAt DateTime @default(now())
 
   @@index([phone])

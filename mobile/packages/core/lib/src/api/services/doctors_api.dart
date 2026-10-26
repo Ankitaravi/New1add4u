@@ -1,4 +1,4 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../enums.dart';
 import '../models.dart';
 import '../money.dart';
@@ -6,7 +6,7 @@ import '../money.dart';
 /// Doctor discovery (patients) and the doctor app's own profile, availability and schedule.
 class DoctorsApi {
   DoctorsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   // ---- patient side ----
 

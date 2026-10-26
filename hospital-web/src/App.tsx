@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ApiError, User, api, getToken, setToken } from './api';
+import { ApiError, User, api, getRefreshToken, getToken, setTokens } from './api';
 import { Dashboard } from './Dashboard';
 import { Login } from './Login';
 
@@ -14,14 +14,15 @@ export function App() {
     api<User>('/auth/me')
       .then(setUser)
       .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) setToken(null);
+        if (e instanceof ApiError && e.status === 401) setTokens(null);
       })
       .finally(() => setLoading(false));
   }, []);
 
   const logout = () => {
-    api('/auth/logout', { method: 'POST' }).catch(() => {});
-    setToken(null);
+    const refreshToken = getRefreshToken();
+    if (refreshToken) api('/auth/logout', { method: 'POST', body: { refreshToken } }).catch(() => {});
+    setTokens(null);
     setUser(null);
   };
 

@@ -1,9 +1,5 @@
-/// API client, models and typed services for the 1ADD4U backend.
+/// The existing `core` surface. The typed API layer is a separate library, `package:core/api.dart`,
+/// so its model names (Price, Appointment, ...) cannot clash with the app's existing ones.
 library;
 
-export 'src/api.dart';
 export 'src/api_client.dart';
-export 'src/enums.dart';
-export 'src/models.dart';
-export 'src/money.dart';
-export 'src/services/services.dart';

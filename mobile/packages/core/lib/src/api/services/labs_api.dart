@@ -1,11 +1,11 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../enums.dart';
 import '../models.dart';
 
 /// Labs and lab bookings: patient side and the investigation (lab) app.
 class LabsApi {
   LabsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   // ---- patient ----
 

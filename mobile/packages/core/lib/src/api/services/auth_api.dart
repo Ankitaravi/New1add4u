@@ -1,30 +1,13 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../models.dart';
 
-class AuthResult {
-  const AuthResult({required this.token, required this.user});
-  final String token;
-  final User user;
-}
-
-/// OTP login and the signed-in user's profile and family.
+/// The signed-in user's own profile and family. Login, refresh and logout belong to the
+/// app's `AuthController` (OTP -> access + refresh tokens), not to this class.
 class AuthApi {
   AuthApi(this._c);
-  final ApiClient _c;
-
-  Future<void> sendOtp(String phone) async =>
-      _c.post('/auth/otp/send', body: {'phone': phone});
-
-  Future<AuthResult> verifyOtp(String phone, String otp) async {
-    final j = await _c
-        .post('/auth/otp/verify', body: {'phone': phone, 'otp': otp}) as Json;
-    return AuthResult(
-        token: j['token'] as String, user: User.fromJson(j['user'] as Json));
-  }
+  final Transport _c;
 
   Future<User> me() async => User.fromJson(await _c.get('/auth/me') as Json);
-
-  Future<void> logout() async => _c.post('/auth/logout');
 
   Future<User> profile() async =>
       User.fromJson(await _c.get('/users/profile') as Json);

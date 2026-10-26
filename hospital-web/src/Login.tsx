@@ -1,10 +1,11 @@
 import { FormEvent, useState } from 'react';
-import { User, api, setToken } from './api';
+import { User, api, setTokens } from './api';
 
 export function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
-  const [sent, setSent] = useState(false);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const sent = challengeId !== null;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -23,15 +24,19 @@ export function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const send = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {
-      await api('/auth/otp/send', { method: 'POST', body: { phone } });
-      setSent(true);
+      const r = await api<{ challengeId: string }>('/auth/otp/request', { method: 'POST', body: { phone } });
+      setChallengeId(r.challengeId);
     });
   };
   const verify = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {
-      const r = await api<{ token: string; user: User }>('/auth/otp/verify', { method: 'POST', body: { phone, otp } });
-      setToken(r.token);
+      const r = await api<{ accessToken: string; refreshToken: string; user: User; adminApprovalRequired: boolean }>(
+        '/auth/otp/verify',
+        { method: 'POST', body: { challengeId, phone, code: otp } },
+      );
+      if (r.adminApprovalRequired) throw new Error('This account cannot sign in here');
+      setTokens(r);
       onLogin(r.user);
     });
   };
@@ -53,7 +58,7 @@ export function Login({ onLogin }: { onLogin: (u: User) => void }) {
       {error && <p className="error" role="alert">{error}</p>}
       <button disabled={busy || phone.length !== 10 || (sent && otp.length < 4)}>{sent ? 'Verify & sign in' : 'Send OTP'}</button>
       {sent && (
-        <button type="button" className="link" onClick={() => { setSent(false); setOtp(''); }}>
+        <button type="button" className="link" onClick={() => { setChallengeId(null); setOtp(''); }}>
           Use a different number
         </button>
       )}

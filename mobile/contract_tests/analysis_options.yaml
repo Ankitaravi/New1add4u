@@ -1,0 +1,4 @@
+include: package:lints/recommended.yaml
+analyzer:
+  exclude:
+    - lib/auth_controller.dart # the app's file, kept byte-for-byte

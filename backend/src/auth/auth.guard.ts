@@ -27,7 +27,7 @@ export class AuthGuard implements CanActivate {
       where: { token },
       include: { user: true },
     });
-    if (!row) throw new UnauthorizedException('Invalid token');
+    if (!row || (row.expiresAt && row.expiresAt < new Date())) throw new UnauthorizedException('Invalid token');
     req.user = row.user;
 
     const roles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, targets);

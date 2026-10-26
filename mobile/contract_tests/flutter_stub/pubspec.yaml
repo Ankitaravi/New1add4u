@@ -1,0 +1,5 @@
+name: flutter
+description: Test-only stand-in for the few Flutter foundation APIs AuthController uses, so it runs under plain `dart test`.
+publish_to: none
+environment:
+  sdk: ^3.5.0

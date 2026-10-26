@@ -1,10 +1,10 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../models.dart';
 
 /// Pharmacies and medicine orders: patient side and the pharmacy app.
 class PharmaApi {
   PharmaApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   // ---- patient ----
 

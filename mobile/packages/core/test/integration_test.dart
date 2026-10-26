@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:core/api.dart';
 import 'package:core/core.dart';
 import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
@@ -17,15 +18,36 @@ String randomPhone() => '9${List.generate(9, (_) => rng.nextInt(10)).join()}';
 String randomHpr() => '71${List.generate(12, (_) => rng.nextInt(10)).join()}';
 final tag = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
 
-/// An [Api] acting as whoever owns [token].
-Api as_(String token) => Api(baseUrl: baseUrl!, tokenProvider: () => token);
-
-Future<Api> signUp(String phone) async {
-  final anon = Api(baseUrl: baseUrl!);
-  await anon.auth.sendOtp(phone);
-  final r = await anon.auth.verifyOtp(phone, '123456');
-  return as_(r.token);
+/// Fixed token, as for the seeded accounts. Real sessions use the app's AuthController (see
+/// mobile/contract_tests).
+class StaticTokens implements TokenProvider {
+  StaticTokens(this.token);
+  final String token;
+  @override
+  Future<String?> accessToken() async => token;
+  @override
+  Future<bool> refresh() async => false;
 }
+
+ApiClient clientAs(String token) =>
+    ApiClient(baseUrl: baseUrl!)..tokens = StaticTokens(token);
+
+/// An [Api] acting as whoever owns [token].
+Api as_(String token) => Api(clientAs(token));
+
+/// Full OTP login through the real endpoints; returns the access token.
+Future<String> loginToken(String phone) async {
+  final raw = ApiClient(baseUrl: baseUrl!);
+  final c = await raw.post('/auth/otp/request', body: {'phone': phone});
+  final r = await raw.post('/auth/otp/verify', body: {
+    'phone': phone,
+    'challengeId': c!['challengeId'],
+    'code': '123456'
+  });
+  return r!['accessToken'] as String;
+}
+
+Future<Api> signUp(String phone) async => as_(await loginToken(phone));
 
 /// What Razorpay Checkout would return for a paid order, signed with the dev secret.
 String sign(String orderId, String paymentId) =>
@@ -51,21 +73,23 @@ void main() {
     patient = await signUp(randomPhone());
   });
 
-  test('auth: OTP login, profile, family', () async {
-    final anon = Api(baseUrl: baseUrl!);
-    await expectLater(anon.auth.sendOtp('123'),
+  test('auth: OTP endpoints validate; profile and family', () async {
+    final raw = ApiClient(baseUrl: baseUrl!);
+    await expectLater(raw.post('/auth/otp/request', body: {'phone': '123'}),
         throwsA(isA<ApiException>().having((e) => e.status, 'status', 400)));
     final phone = randomPhone();
-    await anon.auth.sendOtp(phone);
+    final c = await raw.post('/auth/otp/request', body: {'phone': phone});
     await expectLater(
-        anon.auth.verifyOtp(phone, '000000'),
+        raw.post('/auth/otp/verify', body: {
+          'phone': phone,
+          'challengeId': c!['challengeId'],
+          'code': '000000'
+        }),
         throwsA(
             isA<ApiException>().having((e) => e.isUnauthorized, '401', true)));
-    final r = await anon.auth.verifyOtp(phone, '123456');
-    expect(r.user.role, Role.user);
-    final me = as_(r.token);
-    expect((await me.auth.me()).phone, phone);
 
+    final me = await signUp(randomPhone());
+    expect((await me.auth.me()).role, Role.user);
     final updated = await me.auth.updateProfile(
         name: 'Ravi', gender: 'male', dob: DateTime.utc(1990, 5, 17));
     expect(updated.name, 'Ravi');
@@ -74,12 +98,6 @@ void main() {
     expect((await me.auth.family()).map((f) => f.name), ['Asha']);
     await me.auth.removeFamilyMember(m.id);
     expect(await me.auth.family(), isEmpty);
-
-    await me.auth.logout();
-    await expectLater(
-        me.auth.me(),
-        throwsA(
-            isA<ApiException>().having((e) => e.isUnauthorized, '401', true)));
   }, skip: skip);
 
   test(
@@ -99,7 +117,7 @@ void main() {
 
     // invisible until an admin verifies
     expect(await patient.doctors.search(specialization: spec), isEmpty);
-    await admin!.client
+    await admin!.transport
         .patch('/admin/doctors/${reg.id}/verify', body: {'verified': true});
     final found = await patient.doctors
         .search(specialization: spec, stream: MedicalStream.ayurveda);
@@ -330,7 +348,7 @@ void main() {
         body: 'Revise the cardiac cycle with diagrams daily.');
     expect(a.status, ArticleStatus.pending);
     expect((await patient.content.articles(query: 'Study tips $tag')), isEmpty);
-    await as_('hadmin_token_123').client.patch(
+    await as_('hadmin_token_123').transport.patch(
         '/content/articles/${a.id}/moderate',
         body: {'status': 'APPROVED'});
     final published = await patient.content.articles(query: 'Study tips $tag');
@@ -342,7 +360,8 @@ void main() {
     final student = as_('student2_token');
     await student.students
         .saveProfile(college: 'AIIMS', stream: MedicalStream.mbbs);
-    final course = Course.fromJson(await admin!.client.post('/students/courses',
+    final course = Course.fromJson(await admin!.transport.post(
+            '/students/courses',
             body: {'title': 'Anatomy $tag', 'stream': 'mbbs', 'lessons': 10})
         as Json);
     expect(

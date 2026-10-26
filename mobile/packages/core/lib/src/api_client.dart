@@ -1,115 +1,107 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show SocketException;
 
 import 'package:http/http.dart' as http;
 
-/// A failed API call. [status] is the HTTP status, or 0 when the server could not be reached.
+/// An error response from the backend.
 class ApiException implements Exception {
-  ApiException(this.status, this.message);
+  ApiException(this.statusCode, this.message);
 
-  final int status;
+  final int statusCode;
   final String message;
 
-  bool get isNetwork => status == 0;
-  bool get isUnauthorized => status == 401;
-  bool get isForbidden => status == 403;
-  bool get isNotFound => status == 404;
-  bool get isConflict => status == 409;
+  // Convenience used by the typed services in `api.dart`.
+  int get status => statusCode;
+  bool get isUnauthorized => statusCode == 401;
+  bool get isForbidden => statusCode == 403;
+  bool get isNotFound => statusCode == 404;
+  bool get isConflict => statusCode == 409;
 
   @override
-  String toString() => 'ApiException($status): $message';
+  String toString() => 'ApiException($statusCode): $message';
 }
 
-typedef TokenProvider = String? Function();
+/// Supplies the access token and renews it. Implemented by the auth package,
+/// so this package does not need to know how login works.
+abstract interface class TokenProvider {
+  Future<String?> accessToken();
 
-/// Thin JSON-over-HTTP client for the NestJS backend. Attaches the bearer token, turns
-/// error responses into [ApiException]s, and reports 401s on authenticated calls so the
-/// app can sign the user out.
+  /// Returns true when a new access token was obtained.
+  Future<bool> refresh();
+}
+
+/// JSON client for the 1ADD4U backend. On a 401 it renews the access token
+/// once and retries the request.
 class ApiClient {
-  ApiClient({
-    required String baseUrl,
-    http.Client? httpClient,
-    this.tokenProvider,
-    this.onUnauthorized,
-    this.timeout = const Duration(seconds: 20),
-  })  : baseUrl = baseUrl.replaceFirst(RegExp(r'/+$'), ''),
-        _http = httpClient ?? http.Client();
+  ApiClient({required this.baseUrl, http.Client? client}) : _http = client ?? http.Client();
 
   final String baseUrl;
-  final TokenProvider? tokenProvider;
-
-  /// Called when an authenticated request comes back 401 (expired or revoked token).
-  /// Not called for unauthenticated calls such as a wrong OTP.
-  void Function()? onUnauthorized;
-  final Duration timeout;
   final http.Client _http;
+  TokenProvider? tokens;
 
-  Future<dynamic> get(String path, {Map<String, Object?>? query}) =>
-      request('GET', path, query: query);
-  Future<dynamic> post(String path, {Object? body}) =>
-      request('POST', path, body: body);
-  Future<dynamic> put(String path, {Object? body}) =>
-      request('PUT', path, body: body);
-  Future<dynamic> patch(String path, {Object? body}) =>
-      request('PATCH', path, body: body);
-  Future<dynamic> delete(String path) => request('DELETE', path);
+  Future<Map<String, dynamic>?> get(String path, {Map<String, Object?>? query}) =>
+      _send('GET', path, query: query, auth: true);
 
-  Future<dynamic> request(String method, String path,
-      {Map<String, Object?>? query, Object? body}) async {
-    final params = <String, String>{
+  Future<Map<String, dynamic>?> post(String path, {Object? body, bool auth = false}) =>
+      _send('POST', path, body: body, auth: auth);
+
+  Future<Map<String, dynamic>?> patch(String path, {Object? body}) =>
+      _send('PATCH', path, body: body, auth: true);
+
+  Future<Map<String, dynamic>?> put(String path, {Object? body}) => _send('PUT', path, body: body, auth: true);
+
+  Future<Map<String, dynamic>?> delete(String path, {Object? body}) =>
+      _send('DELETE', path, body: body, auth: true);
+
+  Future<Map<String, dynamic>?> _send(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, Object?>? query,
+    required bool auth,
+    bool retried = false,
+  }) async {
+    final provider = tokens;
+    var uri = Uri.parse('$baseUrl$path');
+    final params = {
       for (final e in (query ?? const <String, Object?>{}).entries)
         if (e.value != null) e.key: e.value.toString(),
     };
-    var uri = Uri.parse('$baseUrl$path');
     if (params.isNotEmpty) {
       uri = uri.replace(queryParameters: {...uri.queryParameters, ...params});
     }
+    final request = http.Request(method, uri)
+      ..headers['Content-Type'] = 'application/json'
+      ..headers['Accept'] = 'application/json';
+    if (auth && provider != null) {
+      final token = await provider.accessToken();
+      if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    }
+    if (body != null) request.body = jsonEncode(body);
 
-    final token = tokenProvider?.call();
-    final req = http.Request(method, uri)
-      ..headers['Accept'] = 'application/json'
-      ..headers['Content-Type'] = 'application/json';
-    if (token != null) req.headers['Authorization'] = 'Bearer $token';
-    if (body != null) req.body = jsonEncode(body);
+    final streamed = await _http.send(request).timeout(const Duration(seconds: 20));
+    final response = await http.Response.fromStream(streamed);
 
-    final http.Response res;
+    if (response.statusCode == 401 && auth && !retried && provider != null && await provider.refresh()) {
+      return _send(method, path, body: body, query: query, auth: auth, retried: true);
+    }
+    if (response.statusCode >= 400) {
+      throw ApiException(response.statusCode, _messageFrom(response.body));
+    }
+    if (response.body.isEmpty) return null;
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{'data': decoded};
+  }
+
+  static String _messageFrom(String body) {
     try {
-      res = await http.Response.fromStream(
-          await _http.send(req).timeout(timeout));
-    } on TimeoutException {
-      throw ApiException(
-          0, 'The request timed out. Check your connection and try again.');
-    } on SocketException {
-      throw ApiException(
-          0, 'Could not reach the server. Check your connection.');
-    } on http.ClientException catch (e) {
-      throw ApiException(0, 'Network error: ${e.message}');
-    }
-
-    final text = utf8.decode(res.bodyBytes);
-    dynamic data;
-    if (text.isNotEmpty) {
-      try {
-        data = jsonDecode(text);
-      } on FormatException {
-        data = null;
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['message'] != null) {
+        final message = decoded['message'];
+        return message is List ? message.join(', ') : message.toString();
       }
+    } on FormatException {
+      return body.isEmpty ? 'Request failed' : body;
     }
-    if (res.statusCode >= 200 && res.statusCode < 300) return data;
-
-    if (res.statusCode == 401 && token != null) onUnauthorized?.call();
-    throw ApiException(res.statusCode, _messageOf(data, res));
+    return body.isEmpty ? 'Request failed' : body;
   }
-
-  /// NestJS sends `message` as a string, or a list when validation fails on several fields.
-  static String _messageOf(dynamic data, http.Response res) {
-    if (data is Map && data['message'] != null) {
-      final m = data['message'];
-      return m is List ? m.join('\n') : m.toString();
-    }
-    return res.reasonPhrase ?? 'Request failed (${res.statusCode})';
-  }
-
-  void close() => _http.close();
 }

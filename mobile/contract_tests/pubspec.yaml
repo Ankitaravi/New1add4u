@@ -1,0 +1,17 @@
+name: auth_contract_tests
+description: Runs the app's real AuthController (lib/auth_controller.dart, unmodified) against the live backend.
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  core:
+    path: ../packages/core
+  flutter:
+    path: flutter_stub
+  http: ^1.2.0
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0

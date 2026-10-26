@@ -1,11 +1,11 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../enums.dart';
 import '../models.dart';
 
 /// Home-visit nursing: patient side and the staff app.
 class StaffApi {
   StaffApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   // ---- patient ----
 

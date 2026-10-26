@@ -1,10 +1,10 @@
-import '../api_client.dart';
+import '../transport.dart';
 import '../enums.dart';
 import '../models.dart';
 
 class HealthRecordsApi {
   HealthRecordsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   /// [kind]: prescription | lab_report | vitals | allergy | note | other.
   Future<HealthRecord> add(
@@ -30,7 +30,7 @@ class HealthRecordsApi {
 
 class NotificationsApi {
   NotificationsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   Future<NotificationPage> list({bool unreadOnly = false}) async =>
       NotificationPage.fromJson(await _c.get('/notifications',
@@ -53,7 +53,7 @@ class NotificationsApi {
 
 class ReferralsApi {
   ReferralsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   /// 409 if already on 1ADD4U or already referred by you.
   Future<void> refer(String phone) async =>
@@ -66,7 +66,7 @@ class ReferralsApi {
 
 class StudentsApi {
   StudentsApi(this._c);
-  final ApiClient _c;
+  final Transport _c;
 
   Future<void> saveProfile({String? college, MedicalStream? stream}) async =>
       _c.put('/students/profile', body: {
