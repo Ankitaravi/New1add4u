@@ -1,0 +1,433 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  DOCTOR
+  STAFF
+  PHARMA
+  INVESTIGATION
+  STUDENT
+  HOSPITAL_ADMIN
+  SUPER_ADMIN
+}
+
+enum MedicalStream {
+  mbbs
+  dental
+  ayurveda
+  homeopathy
+}
+
+enum AppointmentStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  IN_QUEUE
+  COMPLETED
+  NO_SHOW
+  EXPIRED
+  CANCELLED
+}
+
+enum LabStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  SAMPLE_COLLECTED
+  REPORT_UPLOADED
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderStatus {
+  requested
+  quoted
+  rejected
+  paid
+  ready
+  completed
+  cancelled
+  expired
+}
+
+enum PaymentStatus {
+  CREATED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentPurpose {
+  APPOINTMENT
+  LAB_BOOKING
+  PHARMA_ORDER
+  STAFF_VISIT
+}
+
+enum VisitStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ArticleStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  role      Role     @default(USER)
+  name      String?
+  email     String?
+  gender    String?
+  dob       DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doctor        Doctor?
+  family        FamilyMember[]
+  appointments  Appointment[]
+  labBookings   LabBooking[]
+  pharmaOrders  PharmaOrder[]
+  healthRecords HealthRecord[]
+  notifications Notification[]
+  ratings       Rating[]
+  articles      Article[]
+  referrals     Referral[] @relation("Referrer")
+  tokens        AuthToken[]
+  staffVisits   StaffVisit[]
+  deviceTokens  DeviceToken[]
+}
+
+model AuthToken {
+  token     String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model Otp {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
+
+model FamilyMember {
+  id       String    @id @default(cuid())
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name     String
+  relation String
+  gender   String?
+  dob      DateTime?
+
+  @@index([userId])
+}
+
+model Doctor {
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hprId          String?        @unique
+  medicalStream  MedicalStream?
+  isVerified     Boolean        @default(false)
+  specialization String?
+  feePaise       Int            @default(0)
+  hospitalId     String?
+  hospital       Hospital?      @relation(fields: [hospitalId], references: [id])
+  createdAt      DateTime       @default(now())
+
+  availability Availability[]
+  appointments Appointment[]
+  prescriptions Prescription[]
+}
+
+model Availability {
+  id        String @id @default(cuid())
+  doctorId  String
+  doctor    Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  dayOfWeek Int
+  startTime String
+  endTime   String
+  slotMins  Int    @default(15)
+
+  @@unique([doctorId, dayOfWeek])
+}
+
+model Hospital {
+  id      String   @id @default(cuid())
+  name    String
+  city    String?
+  adminId String? @unique
+  doctors Doctor[]
+  departments Department[]
+}
+
+model Department {
+  id         String   @id @default(cuid())
+  hospitalId String
+  hospital   Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  name       String
+}
+
+model Appointment {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id])
+  doctorId   String
+  doctor     Doctor            @relation(fields: [doctorId], references: [id])
+  slot       String
+  date       DateTime
+  status     AppointmentStatus @default(PENDING_PAYMENT)
+  feePaise   Int
+  mdrPaise   Int
+  totalPaise Int
+  createdAt  DateTime          @default(now())
+
+  prescriptions Prescription[]
+
+  @@index([doctorId, date])
+  @@index([userId])
+}
+
+model Prescription {
+  id            String      @id @default(cuid())
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  doctorId      String
+  doctor        Doctor      @relation(fields: [doctorId], references: [id])
+  items         Json
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+model LabProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  name   String
+  city   String?
+  tests  LabTest[]
+  bookings LabBooking[]
+}
+
+model LabTest {
+  id         String     @id @default(cuid())
+  labId      String
+  lab        LabProfile @relation(fields: [labId], references: [id], onDelete: Cascade)
+  type       String
+  name       String
+  pricePaise Int
+  bookings   LabBooking[]
+}
+
+model LabBooking {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id])
+  labId      String
+  lab        LabProfile @relation(fields: [labId], references: [id])
+  testId     String
+  test       LabTest    @relation(fields: [testId], references: [id])
+  status     LabStatus  @default(PENDING_PAYMENT)
+  pricePaise Int
+  mdrPaise   Int        @default(0)
+  totalPaise Int        @default(0)
+  reportUrl  String?
+  createdAt  DateTime   @default(now())
+
+  @@index([userId])
+  @@index([labId])
+}
+
+model PharmaProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  name   String
+  city   String?
+  inventory PharmaItem[]
+  orders PharmaOrder[]
+}
+
+model PharmaItem {
+  id         String        @id @default(cuid())
+  pharmaId   String
+  pharma     PharmaProfile @relation(fields: [pharmaId], references: [id], onDelete: Cascade)
+  name       String
+  unitPricePaise Int
+  stock      Int           @default(0)
+}
+
+model PharmaOrder {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  pharmaId    String
+  pharma      PharmaProfile @relation(fields: [pharmaId], references: [id])
+  status      OrderStatus   @default(requested)
+  items       Json
+  quotedItems Json?
+  totalPaise  Int           @default(0)
+  quotedAt    DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([userId])
+  @@index([pharmaId])
+}
+
+model StaffProfile {
+  id       String @id @default(cuid())
+  userId   String @unique
+  name     String
+  city     String?
+  /// [{ type: ServiceType, pricePaise: int }]
+  services Json   @default("[]")
+  visits   StaffVisit[]
+}
+
+model StaffVisit {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  staffId     String
+  staff       StaffProfile @relation(fields: [staffId], references: [id])
+  serviceType String
+  address     String
+  scheduledAt DateTime
+  status      VisitStatus @default(PENDING_PAYMENT)
+  pricePaise  Int
+  mdrPaise    Int
+  totalPaise  Int
+  createdAt   DateTime    @default(now())
+
+  @@index([userId])
+  @@index([staffId])
+}
+
+model DeviceToken {
+  token     String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform  String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model StudentProfile {
+  id      String @id @default(cuid())
+  userId  String @unique
+  college String?
+  stream  MedicalStream?
+  enrollments Enrollment[]
+}
+
+model Course {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  stream      MedicalStream?
+  lessons     Int            @default(1)
+  createdAt   DateTime       @default(now())
+  enrollments Enrollment[]
+}
+
+model Enrollment {
+  id        String         @id @default(cuid())
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  /// lessons completed, 0..course.lessons
+  progress  Int            @default(0)
+  createdAt DateTime       @default(now())
+
+  @@unique([studentId, courseId])
+}
+
+model HealthRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  kind      String
+  data      Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Article {
+  id        String        @id @default(cuid())
+  authorId  String
+  author    User          @relation(fields: [authorId], references: [id])
+  title     String
+  body      String
+  status    ArticleStatus @default(PENDING)
+  moderationNote String?
+  createdAt DateTime      @default(now())
+}
+
+model Payment {
+  id          String         @id @default(cuid())
+  userId      String
+  purpose     PaymentPurpose
+  refId       String
+  amountPaise Int
+  status      PaymentStatus  @default(CREATED)
+  orderId     String         @unique
+  paymentId   String?
+  createdAt   DateTime       @default(now())
+
+  @@index([refId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Referral {
+  id         String   @id @default(cuid())
+  referrerId String
+  referrer   User     @relation("Referrer", fields: [referrerId], references: [id])
+  phone      String
+  createdAt  DateTime @default(now())
+
+  @@unique([referrerId, phone])
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  doctorId  String
+  stars     Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, doctorId])
+  @@index([doctorId])
+}
